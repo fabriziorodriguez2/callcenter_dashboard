@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard de Gestión</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Dashboard de Gestión</h1>
+    <p>KPIs, filtros y snapshots</p>
+  </header>
+
+  <section class="filters">
+    <div class="field">
+      <label>Fecha desde (YYYYMMDD o YYYYMMDDhhmmss)</label>
+      <input id="start" placeholder="20250101" />
+    </div>
+    <div class="field">
+      <label>Fecha hasta (YYYYMMDD o YYYYMMDDhhmmss)</label>
+      <input id="end" placeholder="20250131" />
+    </div>
+    <div class="field">
+      <label>ID Campaña</label>
+      <input id="campaign_id" type="number" placeholder="1" />
+    </div>
+    <div class="field">
+      <label>ID Agente</label>
+      <input id="agent_id" type="number" placeholder="1" />
+    </div>
+    <button id="btnFetch">Aplicar filtros</button>
+    <button id="btnSave">Guardar snapshot</button>
+  </section>
+
+  <section class="kpis">
+    <div class="kpi">
+      <h3>Contactabilidad</h3>
+      <div id="kpi_contact">-</div>
+    </div>
+    <div class="kpi">
+      <h3>Penetración Bruta</h3>
+      <div id="kpi_pb">-</div>
+    </div>
+    <div class="kpi">
+      <h3>Penetración Neta</h3>
+      <div id="kpi_pn">-</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Distribución por resultado</h2>
+    <div id="bars" class="bars"></div>
+    <table id="distTable">
+      <thead><tr><th>Resultado</th><th>Cantidad</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Top actividad (Campaña / Agente)</h2>
+    <table id="topTable">
+      <thead><tr><th>Campaña</th><th>Agente</th><th>Gestiones</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Snapshots guardados</h2>
+    <div id="snapshots"></div>
+  </section>
+
+  <footer>
+    <small>FastAPI + MySQL + Vanilla JS</small>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>

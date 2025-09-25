@@ -1,0 +1,18 @@
+*{box-sizing:border-box} body{font-family:sans-serif;margin:0;background:#0b0c10;color:#eaeaea}
+header{padding:16px 24px;background:#111;border-bottom:1px solid #222}
+.filters{display:flex;gap:12px;align-items:flex-end;padding:16px 24px;flex-wrap:wrap}
+.field{display:flex;flex-direction:column;gap:6px}
+input{padding:8px 10px;border:1px solid #333;border-radius:8px;background:#0f1115;color:#eaeaea}
+button{padding:10px 14px;border:1px solid #444;background:#1f2937;color:#fff;border-radius:10px;cursor:pointer}
+button:hover{background:#374151}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:16px 24px}
+.kpi{background:#12151b;border:1px solid #222;border-radius:14px;padding:16px}
+.kpi h3{margin:0 0 10px 0;font-weight:600}
+.kpi div{font-size:28px;font-weight:700}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+th,td{border-bottom:1px solid #222;padding:10px;text-align:left}
+section{padding:16px 24px}
+.bars{display:flex;align-items:flex-end;gap:8px;height:160px;padding:10px 0}
+.bar{background:#2563eb; width:26px; border-radius:6px 6px 0 0; display:flex;align-items:flex-end;justify-content:center}
+.bar span{font-size:11px;transform:translateY(18px)}
+footer{padding:12px 24px;border-top:1px solid #222;color:#aaa}
