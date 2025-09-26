@@ -1,4 +1,4 @@
-const API = localStorage.getItem('API_URL') || 'http://localhost:8000';
+const API = localStorage.getItem('API_URL') || 'http://127.0.0.1:8000';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);

@@ -18,11 +18,16 @@ app.add_middleware(
 class SnapshotIn(BaseModel):
     filters: Dict[str, Any]
     kpis: Dict[str, Any]
-    distribution: Dict[str, Any]
+    distribution: List[Dict[str, Any]]
 
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+@app.get("/")
+def root():
+    return {"message": "API OK", "docs": "/docs"}
+
 
 def _filters_to_sql(start_date: Optional[str], end_date: Optional[str], campaign_id: Optional[int], agent_id: Optional[int]):
     wheres = []
