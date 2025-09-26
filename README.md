@@ -54,7 +54,11 @@ DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=rootpassword
 DB_NAME=proteus_crm
+ NOTA: Por falta de tiempo esta demo quedó con credenciales visibles.
+       En un entorno real NO subir el .env y usar un usuario de demo
+      con permisos mínimos (ej: proteus_demo / proteus_demo).
 ```
+
 
 #### 3) Backend (FastAPI)
 ```bash
