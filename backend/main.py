@@ -1,10 +1,9 @@
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from .db import get_conn
 import json
-import re
 
 app = FastAPI(title="Dashboard de Gestión con Snapshots")
 
@@ -16,10 +15,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------- modelos ----------------------------
+
 class SnapshotIn(BaseModel):
     filters: Dict[str, Any]
     kpis: Dict[str, Any]
     distribution: List[Dict[str, Any]]
+
+# ---------------------------- helpers ----------------------------
 
 def _dict_cur(conn):
     return conn.cursor(dictionary=True)
@@ -27,6 +30,82 @@ def _dict_cur(conn):
 def _require(cond: bool, msg: str):
     if not cond:
         raise HTTPException(status_code=400, detail=msg)
+
+def _build_filters(
+    cur,
+    start: Optional[str],
+    end: Optional[str],
+    campaign_token: Optional[str],
+    agent_token: Optional[str],
+) -> Tuple[str, str, List[Any], Dict[str, Optional[str]]]:
+    """
+    Construye los JOIN/WHERE/params y además resuelve labels legibles
+    para campaña y agente (para snapshots y UI).
+    """
+    joins: List[str] = []
+    where: List[str] = []
+    params: List[Any] = []
+    labels: Dict[str, Optional[str]] = {"campaign_label": None, "agent_label": None}
+
+    # Rango de fechas
+    if start and end:
+        where.append("g.`timestamp` BETWEEN %s AND %s")
+        params += [start, end]
+    elif start:
+        where.append("g.`timestamp` >= %s")
+        params += [start]
+    elif end:
+        where.append("g.`timestamp` <= %s")
+        params += [end]
+
+    # Campaign: ID o nombre/código
+    if campaign_token:
+        if campaign_token.isdigit():
+            where.append("g.id_campaign = %s")
+            params.append(int(campaign_token))
+            cur.execute("SELECT nombre FROM campaigns WHERE id = %s", (int(campaign_token),))
+            row = cur.fetchone()
+            labels["campaign_label"] = row["nombre"] if row else f"ID {campaign_token}"
+        else:
+            joins.append("JOIN campaigns c ON c.id = g.id_campaign")
+            where.append("(c.codigo = %s OR c.nombre LIKE %s)")
+            params += [campaign_token, f"%{campaign_token}%"]
+            cur.execute(
+                "SELECT GROUP_CONCAT(DISTINCT nombre ORDER BY nombre SEPARATOR ', ') AS label "
+                "FROM campaigns WHERE (codigo = %s OR nombre LIKE %s)",
+                (campaign_token, f"%{campaign_token}%"),
+            )
+            row = cur.fetchone()
+            labels["campaign_label"] = row["label"] or campaign_token
+
+    # Agent: ID o usuario/nombre-apellido
+    if agent_token:
+        if agent_token.isdigit():
+            where.append("g.id_broker = %s")
+            params.append(int(agent_token))
+            cur.execute(
+                "SELECT CONCAT(nombre, ' ', apellido) AS label FROM users WHERE id = %s",
+                (int(agent_token),),
+            )
+            row = cur.fetchone()
+            labels["agent_label"] = row["label"] if row else f"ID {agent_token}"
+        else:
+            joins.append("JOIN users u ON u.id = g.id_broker")
+            where.append("(u.usuario = %s OR CONCAT(u.nombre,' ',u.apellido) LIKE %s)")
+            params += [agent_token, f"%{agent_token}%"]
+            cur.execute(
+                "SELECT GROUP_CONCAT(DISTINCT CONCAT(nombre,' ',apellido) ORDER BY nombre,apellido SEPARATOR ', ') AS label "
+                "FROM users WHERE (usuario = %s OR CONCAT(nombre,' ',apellido) LIKE %s)",
+                (agent_token, f"%{agent_token}%"),
+            )
+            row = cur.fetchone()
+            labels["agent_label"] = row["label"] or agent_token
+
+    join_sql = (" " + " ".join(sorted(set(joins)))) if joins else ""
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    return join_sql, where_sql, params, labels
+
+# ---------------------------- endpoints ----------------------------
 
 @app.get("/api/health")
 def health():
@@ -36,98 +115,90 @@ def health():
 def root():
     return {"message": "API OK", "docs": "/docs"}
 
-
-def _filters_to_sql(start_date: Optional[str], end_date: Optional[str], campaign_id: Optional[int], agent_id: Optional[int]):
-    wheres = []
-    params = []
-    if start_date:
-        wheres.append("g.`timestamp` >= %s")
-        params.append(start_date)
-    if end_date:
-        wheres.append("g.`timestamp` <= %s")
-        params.append(end_date)
-    if campaign_id:
-        wheres.append("g.id_campaign = %s")
-        params.append(campaign_id)
-    if agent_id:
-        wheres.append("g.id_broker = %s")
-        params.append(agent_id)
-    where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
-    return where_sql, params
-
 @app.get("/api/kpis")
 def get_kpis(
-    start: Optional[str] = Query(None, description="YYYYMMDDhhmmss o YYYYMMDD"),
-    end: Optional[str]   = Query(None, description="YYYYMMDDhhmmss o YYYYMMDD"),
-    campaign_id: Optional[int] = None,
-    agent_id: Optional[int] = None,
+    start: Optional[str] = Query(None, description="YYYYMMDDhhmmss"),
+    end: Optional[str]   = Query(None, description="YYYYMMDDhhmmss"),
+    campaign_id: Optional[str] = Query(None, description="ID, código o nombre de campaña"),
+    agent_id: Optional[str] = Query(None, description="ID, usuario o nombre y apellido del agente"),
 ):
     """
-    Retorna KPIs + distribución de resultados usando las vistas definidas en sql/03_kpi_views.sql
+    KPIs + distribución. `campaign_id` y `agent_id` aceptan ID numérico o texto.
+    Si es texto, se filtra por campañas (codigo/nombre) y por agentes (usuario o nombre+apellido).
     """
     try:
         conn = get_conn()
         cur = conn.cursor(dictionary=True)
 
-        where_sql, params = _filters_to_sql(start, end, campaign_id, agent_id)
+        join_sql, where_sql, params, labels = _build_filters(cur, start, end, campaign_id, agent_id)
 
-        # Totales
-        cur.execute(f"SELECT COUNT(*) as total FROM gestiones g {where_sql}", params)
-        total = cur.fetchone()["total"]
-
-        # Efectivas (vista)
-        cur.execute(f"SELECT COUNT(*) as efectivas FROM vw_gestiones_efectivas g {where_sql.replace('g.', 'g.')} ", params)
-        efectivas = cur.fetchone()["efectivas"] if cur.rowcount is not None else 0
-
-        # Exitosas (vista)
-        cur.execute(f"SELECT COUNT(*) as exitosas FROM vw_gestiones_exitosas g {where_sql.replace('g.', 'g.')}", params)
-        exitosas = cur.fetchone()["exitosas"] if cur.rowcount is not None else 0
-
-        contactabilidad = (efectivas / total) * 100 if total else 0.0
-        penetracion_bruta = (exitosas / total) * 100 if total else 0.0
-        penetracion_neta = (exitosas / efectivas) * 100 if efectivas else 0.0
+        # KPIs (sin vistas): contactabilidad, PB, PN
+        sql_kpis = f"""
+            SELECT
+              ROUND(100 * SUM(g.id_resultado IN (1,2,8,10,11,14,16)) / NULLIF(COUNT(*),0), 2) AS contactabilidad,
+              ROUND(100 * SUM(g.id_resultado = 1) / NULLIF(COUNT(*),0), 2) AS penetracion_bruta,
+              ROUND(100 * SUM(g.id_resultado = 1) /
+                    NULLIF(SUM(g.id_resultado IN (1,2,8,10,11,14,16)),0), 2) AS penetracion_neta
+            FROM gestiones g
+            {join_sql}
+            {where_sql}
+        """
+        cur.execute(sql_kpis, params)
+        kpis = cur.fetchone() or {"contactabilidad": 0, "penetracion_bruta": 0, "penetracion_neta": 0}
 
         # Distribución por resultado
-        cur.execute(f"""
-            SELECT r.nombre as resultado, COUNT(*) as cantidad
+        sql_dist = f"""
+            SELECT r.nombre AS resultado, COUNT(*) AS cantidad
             FROM gestiones g
+            {join_sql}
             JOIN gestiones_resultado r ON r.id = g.id_resultado
             {where_sql}
             GROUP BY r.id, r.nombre
             ORDER BY cantidad DESC
-        """, params)
-        distrib = cur.fetchall()
+        """
+        cur.execute(sql_dist, params)
+        distribution = cur.fetchall() or []
 
-        # Resumen por campaña y agente (extra útil en el dashboard)
+       
         cur.execute(f"""
-            SELECT c.nombre as campaña, u.nombre as agente_nombre, u.apellido as agente_apellido, 
-                   COUNT(*) as gestiones
+            SELECT c.nombre AS campaña,
+                   CONCAT(u.nombre,' ',u.apellido) AS agente,
+                   COUNT(*) AS gestiones
             FROM gestiones g
             JOIN campaigns c ON c.id = g.id_campaign
-            JOIN users u ON u.id = g.id_broker
+            JOIN users u     ON u.id = g.id_broker
             {where_sql}
             GROUP BY c.id, u.id
             ORDER BY gestiones DESC
             LIMIT 10
         """, params)
-        top_resumen = cur.fetchall()
+        top_resumen = cur.fetchall() or []
 
         return {
-            "totals": {"gestiones": total, "efectivas": efectivas, "exitosas": exitosas},
-            "kpis": {
-                "contactabilidad": round(contactabilidad, 2),
-                "penetracion_bruta": round(penetracion_bruta, 2),
-                "penetracion_neta": round(penetracion_neta, 2),
-            },
-            "distribution": distrib,
+            "kpis": kpis,
+            "distribution": distribution,
             "top_resumen": top_resumen,
-            "filters": {"start": start, "end": end, "campaign_id": campaign_id, "agent_id": agent_id},
+            "filters": {
+                "start": start,
+                "end": end,
+                "campaign_id": campaign_id,
+                "agent_id": agent_id,
+                "campaign_label": labels["campaign_label"],
+                "agent_label": labels["agent_label"],
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ---------------------------- snapshots ----------------------------
+
 @app.post("/api/snapshots")
 def create_snapshot(payload: SnapshotIn):
+    """
+    Guarda el snapshot tal cual lo envía el frontend. Como en /api/kpis
+    ya agregamos campaign_label/agent_label dentro de filters, los snapshots
+    nuevos quedarán con esa info legible.
+    """
     try:
         conn = get_conn()
         cur = conn.cursor()
@@ -146,13 +217,12 @@ def list_snapshots():
         conn = get_conn()
         cur = conn.cursor(dictionary=True)
         cur.execute("""
-            SELECT id, created_at, filters_json, kpis_json 
+            SELECT id, created_at, filters_json, kpis_json
             FROM dashboard_snapshots
             ORDER BY created_at DESC
             LIMIT 100
         """)
-        rows = cur.fetchall()
-        return rows
+        return cur.fetchall()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -172,7 +242,9 @@ def get_snapshot(snapshot_id: int):
         return row
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+# ---------------------------- consultas típicas ----------------------------
+
 @app.get("/api/consultas/gestiones")
 def gestiones_por_operador_fecha(
     operator_id: int = Query(..., alias="operator_id"),
@@ -220,8 +292,8 @@ def rendimiento(
     agent_id: Optional[int] = None,
     conn = Depends(get_conn),
 ):
-    where = []
-    params: List = []
+    where: List[str] = []
+    params: List[Any] = []
     if start and end:
         where.append("g.`timestamp` BETWEEN %s AND %s")
         params += [start, end]
@@ -241,9 +313,9 @@ def rendimiento(
         CONCAT(u.nombre, ' ', u.apellido) AS operador,
         COUNT(*) AS gestiones,
         SUM(g.id_resultado IN (1,2,8,10,11,14,16)) AS efectivas,
-        SUM(g.id_resultado = 1)                    AS exitosas,
+        SUM(g.id_resultado = 1) AS exitosas,
         ROUND(100 * SUM(g.id_resultado IN (1,2,8,10,11,14,16)) / NULLIF(COUNT(*),0), 2) AS contactabilidad,
-        ROUND(100 * SUM(g.id_resultado = 1) / NULLIF(COUNT(*),0), 2)                    AS penetracion_bruta,
+        ROUND(100 * SUM(g.id_resultado = 1) / NULLIF(COUNT(*),0), 2) AS penetracion_bruta,
         ROUND(100 * SUM(g.id_resultado = 1) / NULLIF(SUM(g.id_resultado IN (1,2,8,10,11,14,16)),0), 2) AS penetracion_neta
       FROM gestiones g
       JOIN campaigns c ON c.id = g.id_campaign
@@ -278,3 +350,66 @@ def buscar_contactos(
     sql = "SELECT co.id, co.ci, co.nombre1, co.apellido1 FROM contactos co WHERE co.ci = %s"
     cur.execute(sql, (ci,))
     return cur.fetchall()
+
+@app.get("/api/campaigns")
+def campaigns(q: Optional[str] = Query(None, description="Texto a buscar"), limit: int = 10):
+    """
+    Devuelve campañas para autocompletar. Busca por nombre o código (LIKE).
+    Si no se envía q, devuelve las primeras N ordenadas por nombre.
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        if q:
+            cur.execute(
+                """
+                SELECT id, codigo, nombre
+                FROM campaigns
+                WHERE nombre LIKE %s OR codigo LIKE %s
+                ORDER BY nombre
+                LIMIT %s
+                """,
+                (f"%{q}%", f"%{q}%", limit),
+            )
+        else:
+            cur.execute(
+                "SELECT id, codigo, nombre FROM campaigns ORDER BY nombre LIMIT %s",
+                (limit,),
+            )
+        return cur.fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/agents")
+def agents(q: Optional[str] = Query(None, description="Texto a buscar"), limit: int = 10):
+    """
+    Devuelve agentes para autocompletar. Busca por usuario o por nombre y apellido (LIKE).
+    Si no se envía q, devuelve los primeros N ordenados por nombre/apellido.
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        if q:
+            cur.execute(
+                """
+                SELECT id, usuario, CONCAT(nombre,' ',apellido) AS nombre_completo
+                FROM users
+                WHERE usuario LIKE %s OR CONCAT(nombre,' ',apellido) LIKE %s
+                ORDER BY nombre, apellido
+                LIMIT %s
+                """,
+                (f"%{q}%", f"%{q}%", limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, usuario, CONCAT(nombre,' ',apellido) AS nombre_completo
+                FROM users
+                ORDER BY nombre, apellido
+                LIMIT %s
+                """,
+                (limit,),
+            )
+        return cur.fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
