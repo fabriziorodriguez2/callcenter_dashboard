@@ -1,6 +1,6 @@
 # Dashboard de Gestión FastAPI + MySQL + HTML/CSS/JS
 
-Aplicación para supervisar campañas con 3 KPIs (Contactabilidad, Penetración Bruta, Penetración Neta), gráfica de distribución, tabla de detalles y snapshots persistentes (se guardan tal cual, sin recalcular).
+Aplicación para supervisar campañas con 3 KPIs (Contactabilidad, Penetración Bruta, Penetración Neta), gráfica de distribución, tabla de detalles y snapshots persistentes.
 
 ======================================================================
 
@@ -52,7 +52,7 @@ mysql -u root -p proteus_crm < sql/03_kpi_views.sql
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_USER=root
-DB_PASSWORD=SU_PASSWORD
+DB_PASSWORD=
 DB_NAME=proteus_crm
 ```
 
