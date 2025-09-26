@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from .db import get_conn
 import json
+import re
 
 app = FastAPI(title="Dashboard de Gestión con Snapshots")
 
@@ -19,6 +20,13 @@ class SnapshotIn(BaseModel):
     filters: Dict[str, Any]
     kpis: Dict[str, Any]
     distribution: List[Dict[str, Any]]
+
+def _dict_cur(conn):
+    return conn.cursor(dictionary=True)
+
+def _require(cond: bool, msg: str):
+    if not cond:
+        raise HTTPException(status_code=400, detail=msg)
 
 @app.get("/api/health")
 def health():
@@ -161,7 +169,112 @@ def get_snapshot(snapshot_id: int):
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Snapshot no encontrado")
-        # No se recalcula nada: se devuelve tal cual fue guardado
         return row
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/api/consultas/gestiones")
+def gestiones_por_operador_fecha(
+    operator_id: int = Query(..., alias="operator_id"),
+    date: str = Query(..., pattern=r"^\d{8}$"),  # YYYYMMDD
+    conn = Depends(get_conn),
+):
+    start = f"{date}000000"; end = f"{date}235959"
+    sql = """
+      SELECT g.id, g.id_campaign, c.nombre AS campaña,
+             g.id_contacto, co.nombre1, co.apellido1,
+             r.nombre AS resultado, g.notas, g.`timestamp`
+      FROM gestiones g
+      JOIN campaigns c ON c.id = g.id_campaign
+      JOIN contactos co ON co.id = g.id_contacto
+      LEFT JOIN gestiones_resultado r ON r.id = g.id_resultado
+      WHERE g.id_broker = %s
+        AND g.`timestamp` BETWEEN %s AND %s
+      ORDER BY g.`timestamp` DESC
+    """
+    cur = _dict_cur(conn); cur.execute(sql, (operator_id, start, end))
+    return cur.fetchall()
+
+@app.get("/api/consultas/no_contesta")
+def contactos_no_contesta(
+    campaign_id: int,
+    conn = Depends(get_conn),
+):
+    sql = """
+      SELECT DISTINCT co.id, co.ci, co.nombre1, co.apellido1
+      FROM gestiones g
+      JOIN contactos co ON co.id = g.id_contacto
+      JOIN gestiones_resultado r ON r.id = g.id_resultado
+      WHERE g.id_campaign = %s
+        AND UPPER(r.nombre) = UPPER('No contesta')
+      ORDER BY co.apellido1, co.nombre1
+    """
+    cur = _dict_cur(conn); cur.execute(sql, (campaign_id,))
+    return cur.fetchall()
+
+@app.get("/api/consultas/rendimiento")
+def rendimiento(
+    start: Optional[str] = Query(None, pattern=r"^\d{14}$"),  # YYYYMMDDhhmmss
+    end:   Optional[str] = Query(None, pattern=r"^\d{14}$"),
+    campaign_id: Optional[int] = None,
+    agent_id: Optional[int] = None,
+    conn = Depends(get_conn),
+):
+    where = []
+    params: List = []
+    if start and end:
+        where.append("g.`timestamp` BETWEEN %s AND %s")
+        params += [start, end]
+    if campaign_id:
+        where.append("g.id_campaign = %s")
+        params.append(campaign_id)
+    if agent_id:
+        where.append("g.id_broker = %s")
+        params.append(agent_id)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    sql = f"""
+      SELECT
+        g.id_campaign,
+        c.nombre AS campaña,
+        g.id_broker,
+        CONCAT(u.nombre, ' ', u.apellido) AS operador,
+        COUNT(*) AS gestiones,
+        SUM(g.id_resultado IN (1,2,8,10,11,14,16)) AS efectivas,
+        SUM(g.id_resultado = 1)                    AS exitosas,
+        ROUND(100 * SUM(g.id_resultado IN (1,2,8,10,11,14,16)) / NULLIF(COUNT(*),0), 2) AS contactabilidad,
+        ROUND(100 * SUM(g.id_resultado = 1) / NULLIF(COUNT(*),0), 2)                    AS penetracion_bruta,
+        ROUND(100 * SUM(g.id_resultado = 1) / NULLIF(SUM(g.id_resultado IN (1,2,8,10,11,14,16)),0), 2) AS penetracion_neta
+      FROM gestiones g
+      JOIN campaigns c ON c.id = g.id_campaign
+      JOIN users u     ON u.id = g.id_broker
+      {where_sql}
+      GROUP BY g.id_campaign, c.nombre, g.id_broker, operador
+      ORDER BY campaña, operador
+    """
+    cur = _dict_cur(conn); cur.execute(sql, tuple(params))
+    return cur.fetchall()
+
+@app.get("/api/consultas/contactos")
+def buscar_contactos(
+    telefono: Optional[str] = None,
+    ci: Optional[int] = None,
+    conn = Depends(get_conn),
+):
+    _require(telefono or ci, "Debe enviar 'telefono' o 'ci'")
+    cur = _dict_cur(conn)
+
+    if telefono:
+        sql = """
+          SELECT co.id, co.ci, co.nombre1, co.apellido1, t.numero AS telefono
+          FROM contactos co
+          JOIN telefonos t
+            ON t.id IN (co.id_tel_fijo1, co.id_tel_fijo2, co.id_tel_movil1, co.id_tel_movil2)
+          WHERE t.numero = %s
+        """
+        cur.execute(sql, (telefono,))
+        return cur.fetchall()
+
+    sql = "SELECT co.id, co.ci, co.nombre1, co.apellido1 FROM contactos co WHERE co.ci = %s"
+    cur.execute(sql, (ci,))
+    return cur.fetchall()

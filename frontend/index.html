@@ -5,110 +5,111 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dashboard de Gestión</title>
   <link rel="stylesheet" href="./styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <div class="container">
-    <header class="header">
-      <div class="title">Dashboard de Gestión</div>
-      <div class="header-actions">
-        <label class="switch" title="Tema claro/oscuro">
-          <input id="themeToggle" type="checkbox" />
-          <span class="track"><span class="thumb"></span></span>
-          <span class="switch-label">Tema</span>
-        </label>
-      </div>
-    </header>
-
-    <!-- Controles / filtros -->
-    <section class="toolbar">
-      <div class="field">
-        <label>Desde</label>
-        <input id="start" type="datetime-local" />
-      </div>
-      <div class="field">
-        <label>Hasta</label>
-        <input id="end" type="datetime-local" />
-      </div>
-      <div class="field small">
-        <label>ID Campaña</label>
-        <input id="campaign_id" type="number" placeholder="1" />
-      </div>
-      <div class="field small">
-        <label>ID Agente</label>
-        <input id="agent_id" type="number" placeholder="1" />
-      </div>
-      <button class="btn" id="btnFetch">Aplicar filtros</button>
-      <button class="btn primary" id="btnSave">Guardar snapshot</button>
-    </section>
-
-    <!-- KPIs -->
-    <section class="grid kpis">
-      <div class="card kpi">
-        <h3>Contactabilidad</h3>
-        <div class="value" id="kpi_contact">—</div>
-      </div>
-      <div class="card kpi">
-        <h3>Penetración Bruta</h3>
-        <div class="value" id="kpi_pb">—</div>
-      </div>
-      <div class="card kpi">
-        <h3>Penetración Neta</h3>
-        <div class="value" id="kpi_pn">—</div>
+  <main class="container">
+    <!-- FILTROS -->
+    <section class="card filters">
+      <h2 class="section-title">Filtros</h2>
+      <div class="filters-row">
+        <input id="start" class="input" type="datetime-local" />
+        <span class="dash">—</span>
+        <input id="end" class="input" type="datetime-local" />
+        <input id="campaign_id" class="input small" type="number" placeholder="ID campaña" />
+        <input id="agent_id" class="input small" type="number" placeholder="ID agente" />
+        <button id="btnFetch" class="btn">Aplicar filtros</button>
+        <button id="btnSave" class="btn primary">Guardar snapshot</button>
       </div>
     </section>
 
-    <!-- Distribución y Top -->
-    <section class="grid two">
-      <div class="card">
-        <h3>Distribución por resultado</h3>
-        <div id="bars" class="bars"></div>
-        <div class="table-wrap">
-          <table id="distTable">
-            <thead><tr><th>Resultado</th><th>Cantidad</th></tr></thead>
-            <tbody></tbody>
-          </table>
+    <!-- KPIs (CENTRO) -->
+    <section class="kpis">
+      <article class="kpi card">
+        <div class="kpi-title">Contactabilidad</div>
+        <div id="kpi_contact" class="kpi-value">—</div>
+      </article>
+      <article class="kpi card">
+        <div class="kpi-title">Penetración Bruta</div>
+        <div id="kpi_pb" class="kpi-value">—</div>
+      </article>
+      <article class="kpi card">
+        <div class="kpi-title">Penetración Neta</div>
+        <div id="kpi_pn" class="kpi-value">—</div>
+      </article>
+    </section>
+
+    <!-- GRÁFICA -->
+    <section class="card">
+      <h2 class="section-title">Distribución por resultado</h2>
+      <div class="chart-wrap"><canvas id="distChart" height="220"></canvas></div>
+    </section>
+
+    <!-- DETALLES -->
+    <section class="card">
+      <h2 class="section-title">Detalles</h2>
+      <div class="table-wrap">
+        <table id="distTable">
+          <thead><tr><th>Resultado</th><th>Cantidad</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CONSULTAS -->
+    <section class="card">
+      <h2 class="section-title">Consultas</h2>
+      <div class="queries">
+        <div class="qrow">
+          <input id="q_op_id" class="input small" type="number" placeholder="ID operador" />
+          <input id="q_date" class="input" type="date" />
+          <button id="btnQGestiones" class="btn">Gestiones por día</button>
+        </div>
+      
+        <div class="qrow">
+          <input id="q_campaign" class="input small" type="number" placeholder="ID campaña" />
+          <button id="btnQNoContesta" class="btn">Contactos 'No contesta'</button>
+        </div>
+      
+        <div class="qrow">
+          <button id="btnQRend" class="btn primary">Rendimiento (usa filtros arriba)</button>
+        </div>
+      
+        <div class="qrow">
+          <input id="q_tel" class="input small" placeholder="Teléfono" />
+          <input id="q_ci" class="input small" placeholder="CI" />
+          <button id="btnQBuscar" class="btn">Buscar contacto</button>
         </div>
       </div>
-      <div class="card">
-        <h3>Top actividad (Campaña / Agente)</h3>
-        <div class="table-wrap">
-          <table id="topTable">
-            <thead><tr><th>Campaña</th><th>Agente</th><th>Gestiones</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
     </section>
 
-    <!-- Snapshots -->
-    <section>
-      <div class="card">
-        <h3>Snapshots guardados</h3>
-        <div id="snapshots" class="snap-list"></div>
-      </div>
+    <!-- SNAPSHOTS -->
+    <section class="card">
+      <h2 class="section-title">Snapshots</h2>
+      <div id="snapshots" class="snapshots"></div>
     </section>
-  </div>
+  </main>
 
-  <!-- Botón flotante de Configurar API (afuera del header) -->
+  <!-- Botón flotante: Configurar API -->
   <button id="btnSettings" class="fab" title="Configurar API">⚙️</button>
 
-  <!-- Modal para ver snapshot -->
+  <!-- MODAL -->
   <div id="modal" class="modal" aria-hidden="true">
     <div class="modal-backdrop"></div>
     <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <div class="modal-header">
-        <div class="modal-title" id="modalTitle">Snapshot</div>
-        <button class="btn close" id="modalClose" aria-label="Cerrar">✕</button>
+        <div id="modalTitle" class="modal-title">Snapshot</div>
+        <button id="modalClose" class="btn close" aria-label="Cerrar">✕</button>
       </div>
-      <div class="modal-body" id="modalBody"></div>
+      <div id="modalBody" class="modal-body"></div>
       <div class="modal-footer">
-        <button class="btn" id="modalClose2">Cerrar</button>
+        <button id="modalClose2" class="btn">Cerrar</button>
       </div>
     </div>
   </div>
 
-  <!-- Toast simple -->
-  <div id="toast" class="toast">Guardado</div>
+  <!-- TOAST -->
+  <div id="toast" class="toast">OK</div>
 
   <script src="./app.js"></script>
 </body>
